@@ -73,3 +73,11 @@ func TestCharsetAndBase(t *testing.T) {
 		t.Errorf("clearnet base accepted: %v", p.Base)
 	}
 }
+
+func TestUnknownCharset(t *testing.T) {
+	base, _ := url.Parse("http://example.onion/")
+	p, err := Process([]byte("<p>hello</p>"), "text/html; charset=x-made-up-charset", base)
+	if err != nil || p.Text != "hello" {
+		t.Fatalf("got %v %+v", err, p)
+	}
+}

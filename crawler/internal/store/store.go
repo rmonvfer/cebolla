@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -232,38 +231,52 @@ type Job struct {
 	Attempts int
 }
 
-// ErrNoWork means no site is due right now.
-var ErrNoWork = errors.New("no work")
-
-// Claim leases one due site (so no other worker touches it) and returns its
-// next frontier URL. Politeness lives here: a site is due only when its
-// lease has expired and next_allowed_at has passed.
-func (s *Store) Claim(ctx context.Context, lease time.Duration) (*Job, error) {
-	j := &Job{}
-	err := s.db.QueryRow(ctx, `
+// Claim leases up to n due sites (so no other worker touches them) and
+// returns the next frontier URL of each. Politeness lives here: a site is due
+// only when its lease has expired and next_allowed_at has passed. Claiming in
+// batches keeps this query, which scans every site, off the per-fetch path.
+func (s *Store) Claim(ctx context.Context, lease time.Duration, n int) ([]*Job, error) {
+	rows, err := s.db.Query(ctx, `
 		WITH c AS (
 			SELECT s.id FROM sites s
 			WHERE s.next_allowed_at <= now() AND s.lease_until <= now() AND s.status <> 'auth_gated'
 			  AND EXISTS (SELECT 1 FROM frontier f WHERE f.site_id = s.id AND f.next_fetch_at <= now())
 			ORDER BY (s.pages_fetched = 0) DESC, s.next_allowed_at
-			LIMIT 1 FOR UPDATE SKIP LOCKED)
-		UPDATE sites SET lease_until = now() + $1::interval FROM c
-		WHERE sites.id = c.id RETURNING sites.id, sites.onion`, lease).Scan(&j.SiteID, &j.Onion)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNoWork
-	}
+			LIMIT $2 FOR UPDATE SKIP LOCKED),
+		l AS (
+			UPDATE sites SET lease_until = now() + $1::interval FROM c
+			WHERE sites.id = c.id RETURNING sites.id, sites.onion)
+		SELECT l.id, l.onion, f.url_hash, f.url, f.depth, f.attempts
+		FROM l LEFT JOIN LATERAL (
+			SELECT url_hash, url, depth, attempts FROM frontier
+			WHERE site_id = l.id AND next_fetch_at <= now()
+			ORDER BY priority, next_fetch_at LIMIT 1) f ON true`, lease, n)
 	if err != nil {
 		return nil, err
 	}
-	err = s.db.QueryRow(ctx, `
-		SELECT url_hash, url, depth, attempts FROM frontier
-		WHERE site_id = $1 AND next_fetch_at <= now()
-		ORDER BY priority, next_fetch_at LIMIT 1`, j.SiteID).Scan(&j.URLHash, &j.URL, &j.Depth, &j.Attempts)
-	if errors.Is(err, pgx.ErrNoRows) { // raced with a purge or another worker's finish
-		s.Release(ctx, j.SiteID, 0)
-		return nil, ErrNoWork
+	var jobs []*Job
+	var empty []int64
+	for rows.Next() {
+		var j Job
+		var url *string
+		var depth, attempts *int
+		if err := rows.Scan(&j.SiteID, &j.Onion, &j.URLHash, &url, &depth, &attempts); err != nil {
+			return nil, err
+		}
+		if url == nil { // raced with a purge or a finish: nothing left to fetch
+			empty = append(empty, j.SiteID)
+			continue
+		}
+		j.URL, j.Depth, j.Attempts = *url, *depth, *attempts
+		jobs = append(jobs, &j)
 	}
-	return j, err
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, id := range empty {
+		s.Release(ctx, id, 0)
+	}
+	return jobs, nil
 }
 
 // Release ends the lease; the site is due again after delay.

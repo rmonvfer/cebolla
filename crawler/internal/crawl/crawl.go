@@ -102,23 +102,52 @@ func (c *Crawler) Run(ctx context.Context) {
 			}
 		})
 	}
+	jobs := make(chan *store.Job, claimBatch)
+	wg.Go(func() { c.dispatch(ctx, jobs) })
 	for range c.cfg.Workers {
-		wg.Go(func() { c.worker(ctx) })
+		wg.Go(func() { c.worker(ctx, jobs) })
 	}
 	wg.Wait()
 }
 
-func (c *Crawler) worker(ctx context.Context) {
+// claimBatch is how many sites the dispatcher leases per query.
+const claimBatch = 64
+
+// dispatch leases due sites in batches and hands them to the workers. It only
+// claims when the queue is running low, so jobs never wait long enough in the
+// channel for their lease to matter.
+func (c *Crawler) dispatch(ctx context.Context, jobs chan<- *store.Job) {
+	defer close(jobs)
 	for ctx.Err() == nil {
-		job, err := c.st.Claim(ctx, c.cfg.Lease)
+		if len(jobs) > claimBatch/4 {
+			sleep(ctx, 200*time.Millisecond)
+			continue
+		}
+		batch, err := c.st.Claim(ctx, c.cfg.Lease, claimBatch-len(jobs))
 		if err != nil {
-			if !errors.Is(err, store.ErrNoWork) && ctx.Err() == nil {
+			if ctx.Err() == nil {
 				metrics.Errors.WithLabelValues("claim").Inc()
 				c.log.Error("claim", "err", err)
 			}
+			sleep(ctx, 5*time.Second)
+			continue
+		}
+		if len(batch) == 0 {
 			sleep(ctx, 2*time.Second+rand.N(2*time.Second))
 			continue
 		}
+		for _, j := range batch {
+			select {
+			case jobs <- j:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func (c *Crawler) worker(ctx context.Context, jobs <-chan *store.Job) {
+	for job := range jobs {
 		metrics.Workers.Inc()
 		delay := c.process(ctx, job)
 		metrics.Workers.Dec()
@@ -193,6 +222,7 @@ func (c *Crawler) handlePage(ctx context.Context, job *store.Job, res *fetch.Res
 	page, err := sanitize.Process(res.Body, res.ContentType, res.URL)
 	if err != nil {
 		metrics.Errors.WithLabelValues("parse").Inc()
+		c.log.Error("parse", "site_id", job.SiteID, "content_type", res.ContentType, "err", err)
 		return false
 	}
 	// The filter sees everything that could be stored: title, text, URL and

@@ -6,6 +6,7 @@ package sanitize
 
 import (
 	"bytes"
+	"io"
 	"net/url"
 	"strings"
 	"unicode"
@@ -62,9 +63,11 @@ var blockElems = map[atom.Atom]bool{
 // it and extracts title, text and links. pageURL is used as the link base
 // unless the page declares an onion <base href>.
 func Process(body []byte, contentType string, pageURL *url.URL) (*Page, error) {
-	r, err := charset.NewReader(bytes.NewReader(body), contentType)
-	if err != nil {
-		return nil, err
+	var r io.Reader = bytes.NewReader(body)
+	// An unknown or broken charset label should not cost us the page: fall
+	// back to the raw bytes, which the HTML parser reads as UTF-8.
+	if cr, err := charset.NewReader(bytes.NewReader(body), contentType); err == nil {
+		r = cr
 	}
 	doc, err := html.Parse(r)
 	if err != nil {
