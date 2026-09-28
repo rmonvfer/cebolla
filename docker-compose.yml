@@ -1,0 +1,162 @@
+# Onion crawler stack. Runs INSIDE the isolated VM only (see vm/ and README).
+#
+# Networks:
+#   internal  no route out. crawler, postgres, opensearch live only here.
+#   egress    internet. Only tor (to reach the Tor network) and seedsync
+#             (Ahmia's clearnet lists) are attached.
+#   ui        publishes Grafana/Prometheus on the VM's 127.0.0.1; reach them
+#             with an SSH tunnel from the host.
+#
+# The crawler cannot resolve or reach anything but the tor containers and the
+# databases: onion names go to tor unresolved (socks5h), and there is no DNS
+# or route for anything else.
+
+name: onion
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  tor:
+    build: ./tor
+    image: onion-tor:latest
+    <<: *hardening
+    deploy:
+      replicas: ${TOR_INSTANCES:-5}
+    tmpfs:
+      - /var/lib/tor:uid=100,gid=101,mode=0700
+    networks: [internal, egress]
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crawler
+      POSTGRES_DB: crawler
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=4GB
+      - -c
+      - effective_cache_size=10GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_wal_size=8GB
+      - -c
+      - max_connections=200
+    shm_size: 1g
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawler -d crawler"]
+      interval: 5s
+      retries: 30
+    networks: [internal]
+
+  opensearch:
+    image: opensearchproject/opensearch:3.8.0
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms6g -Xmx6g
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:?set in .env}
+      DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI: "true"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk -u admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD https://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      retries: 60
+    networks: [internal]
+
+  crawler:
+    build: ./crawler
+    image: onion-crawler:latest
+    <<: *hardening
+    command: ["run"]
+    environment: &crawler-env
+      DATABASE_URL: postgres://crawler:${POSTGRES_PASSWORD}@postgres:5432/crawler?sslmode=disable
+      OPENSEARCH_URL: https://opensearch:9200
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      TOR_PROXIES: tor:9050
+      FILTER_TERMS: /etc/crawler/filter/terms.txt
+      WORKERS: ${WORKERS:-64}
+      PER_SITE_DELAY: ${PER_SITE_DELAY:-8s}
+      MAX_DEPTH: ${MAX_DEPTH:-3}
+      PAGE_CAP: ${PAGE_CAP:-200}
+      REPORT_DIR: /report
+      REPORT_AGE_RECIPIENT: ${REPORT_AGE_RECIPIENT:-}
+    volumes:
+      - ./filter:/etc/crawler/filter:ro
+      - report:/report
+    depends_on:
+      postgres: { condition: service_healthy }
+      opensearch: { condition: service_healthy }
+      tor: { condition: service_started }
+    networks: [internal]
+
+  seedsync:
+    image: onion-crawler:latest
+    <<: *hardening
+    command: ["seedsync"]
+    environment:
+      <<: *crawler-env
+      SEED_URLS: ${SEED_URLS:-https://ahmia.fi/onions/}
+      SEED_INTERVAL: 24h
+    volumes:
+      - ./filter:/etc/crawler/filter:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [internal, egress]
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [internal, ui]
+
+  grafana:
+    image: grafana/grafana-oss:13.0.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set in .env}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafdata:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [internal, ui]
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+  ui: {}
+
+volumes:
+  pgdata:
+  osdata:
+  report:
+  promdata:
+  grafdata:

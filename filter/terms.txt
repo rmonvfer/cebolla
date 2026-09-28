@@ -1,0 +1,53 @@
+# Content filter terms. A single match on a page (text, title, link URLs or
+# anchor text) discards the page, purges everything stored for the site and
+# adds the site to the local blocklist. Also checked against every URL before
+# it is queued or fetched.
+#
+# Syntax:
+#   two or more words   matches as consecutive whole words (case/accents ignored)
+#   ~token              matches as a substring, also with separators removed
+#
+# This is a STARTER list of widely documented, unambiguous terms. Extend it
+# from a maintained source (e.g. hotline/NGO keyword lists) before crawling at
+# scale. Err on the side of over-blocking. The crawler refuses to start if
+# this file is empty.
+
+# Explicit phrases
+child porn
+child pornography
+child sexual abuse
+child abuse material
+child abuse images
+child abuse videos
+csam
+cp links
+cp videos
+cp archive
+kiddie porn
+kid porn
+underage porn
+underage sex
+preteen porn
+preteen sex
+teen cp
+baby porn
+toddler porn
+pedo porn
+pedophile porn
+paedophile porn
+jailbait porn
+
+# Substring tokens (known keywords that rarely appear innocently)
+~pthc
+~hurtcore
+~childporn
+~kidporn
+~pedoporn
+~preteenporn
+~pedophil
+~paedophil
+~jailbait
+~lolicon
+~shotacon
+~babyporn
+~toddlerporn

@@ -1,0 +1,373 @@
+{
+ "title": "Onion crawler",
+ "uid": "onion-crawler",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "type": "stat",
+   "title": "Pages stored",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_pages"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Sites up",
+   "gridPos": {
+    "x": 4,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_sites{status=\"up\"}"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Frontier due",
+   "gridPos": {
+    "x": 8,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_frontier{kind=\"due\"}"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Busy workers",
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_busy_workers"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Tor proxies",
+   "gridPos": {
+    "x": 16,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_tor_proxies"
+    }
+   ]
+  },
+  {
+   "type": "stat",
+   "title": "Filter purges (total)",
+   "gridPos": {
+    "x": 20,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(crawler_site_purges_total{reason=\"filter\"})"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Fetch rate by outcome",
+   "gridPos": {
+    "x": 0,
+    "y": 4,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (outcome) (rate(crawler_fetches_total[5m]))",
+     "legendFormat": "{{outcome}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Fetch latency (p50 / p95)",
+   "gridPos": {
+    "x": 12,
+    "y": 4,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(crawler_fetch_duration_seconds_bucket{outcome=\"ok\"}[5m])))",
+     "legendFormat": "p50"
+    },
+    {
+     "refId": "B",
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(crawler_fetch_duration_seconds_bucket{outcome=\"ok\"}[5m])))",
+     "legendFormat": "p95"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Error rate by proxy",
+   "gridPos": {
+    "x": 0,
+    "y": 12,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (proxy) (rate(crawler_fetches_total{outcome!~\"ok|http_error\"}[5m])) / sum by (proxy) (rate(crawler_fetches_total[5m]))",
+     "legendFormat": "{{proxy}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Sites by status",
+   "gridPos": {
+    "x": 12,
+    "y": 12,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_sites",
+     "legendFormat": "{{status}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Guards: blocklist skips, filter hits, aborts",
+   "gridPos": {
+    "x": 0,
+    "y": 20,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (stage) (rate(crawler_blocklist_skips_total[15m]))",
+     "legendFormat": "blocklist {{stage}}"
+    },
+    {
+     "refId": "B",
+     "expr": "sum by (stage) (rate(crawler_filter_hits_total[15m]))",
+     "legendFormat": "filter {{stage}}"
+    },
+    {
+     "refId": "C",
+     "expr": "sum by (outcome) (rate(crawler_fetches_total{outcome=~\"content_type|too_large|sniff\"}[15m]))",
+     "legendFormat": "abort {{outcome}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Throughput",
+   "gridPos": {
+    "x": 12,
+    "y": 20,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "rate(crawler_pages_stored_total[5m])",
+     "legendFormat": "pages stored/s"
+    },
+    {
+     "refId": "B",
+     "expr": "rate(crawler_indexed_docs_total[5m])",
+     "legendFormat": "docs indexed/s"
+    },
+    {
+     "refId": "C",
+     "expr": "rate(crawler_links_queued_total[5m])",
+     "legendFormat": "links queued/s"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Internal errors",
+   "gridPos": {
+    "x": 0,
+    "y": 28,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (component) (rate(crawler_internal_errors_total[5m]))",
+     "legendFormat": "{{component}}"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Frontier",
+   "gridPos": {
+    "x": 12,
+    "y": 28,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "crawler_frontier",
+     "legendFormat": "{{kind}}"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,102 @@
+#cloud-config
+# Ubuntu autoinstall for the onion VM. Everything is automatic EXCEPT the
+# storage screen: there you pick "Use an entire disk", tick "Set up this disk
+# as an LVM group" + "Encrypt the LVM group with LUKS", and type the
+# passphrase. It is never written anywhere. (vm/deploy.sh refuses to deploy
+# onto an unencrypted root.)
+autoinstall:
+  version: 1
+  interactive-sections:
+    - storage
+  refresh-installer:
+    update: false
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: Etc/UTC
+  network:
+    version: 2
+    ethernets:
+      uplink:
+        match:
+          macaddress: "52:54:00:66:00:10"
+        dhcp4: false
+        dhcp6: false
+        accept-ra: false
+        link-local: []
+        addresses: [10.66.0.10/24]
+        routes:
+          - to: default
+            via: 10.66.0.1
+        nameservers:
+          addresses: [9.9.9.9, 149.112.112.112]
+  apt:
+    geoip: false
+  ssh:
+    install-server: true
+    allow-pw: false
+  packages:
+    - docker.io
+    - docker-compose-v2
+    - nftables
+    - unattended-upgrades
+    - rsync
+  late-commands:
+    # No display: GRUB and the LUKS passphrase prompt must be on the serial console.
+    - |
+      cat > /target/etc/default/grub.d/99-serial.cfg <<'EOF'
+      GRUB_CMDLINE_LINUX="console=ttyS0,115200n8"
+      GRUB_TERMINAL=serial
+      GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
+      GRUB_TIMEOUT=3
+      EOF
+    - curtin in-target -- update-grub
+  user-data:
+    hostname: onion
+    users:
+      - name: ramon
+        groups: [sudo, docker]
+        shell: /bin/bash
+        lock_passwd: false
+        passwd: "__PASSWORD_HASH__"
+        ssh_authorized_keys:
+          - "__SSH_KEY__"
+    ssh_pwauth: false
+    write_files:
+      - path: /etc/sysctl.d/90-onion.conf
+        content: |
+          vm.max_map_count = 262144
+          net.ipv6.conf.all.disable_ipv6 = 1
+          net.ipv6.conf.default.disable_ipv6 = 1
+          kernel.kptr_restrict = 2
+          kernel.dmesg_restrict = 1
+      - path: /etc/docker/daemon.json
+        content: |
+          {"log-driver": "local", "log-opts": {"max-size": "20m", "max-file": "5"},
+           "ipv6": false, "live-restore": true, "no-new-privileges": true}
+      # Second layer behind the host firewall: only SSH from the host gets in.
+      # Scoped to its own table (no "flush ruleset"), so Docker's rules survive
+      # a reload.
+      - path: /etc/nftables.conf
+        permissions: "0755"
+        content: |
+          #!/usr/sbin/nft -f
+          table inet guest_fw
+          delete table inet guest_fw
+          table inet guest_fw {
+            chain input {
+              type filter hook input priority filter; policy drop;
+              iif "lo" accept
+              ct state established,related accept
+              ct state invalid drop
+              iifname "docker0" accept
+              iifname "br-*" accept
+              ip saddr 10.66.0.1 tcp dport 22 accept
+            }
+          }
+    runcmd:
+      - lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv || true
+      - sysctl --system
+      - systemctl enable --now nftables
+      - systemctl restart docker
+      - touch /etc/cloud/cloud-init.disabled

@@ -1,0 +1,20 @@
+# Tor as a pure client: no relay, no exit, no bridge, no onion service.
+ClientOnly 1
+ExitRelay 0
+DataDirectory /var/lib/tor
+AvoidDiskWrites 1
+Log notice stdout
+ClientUseIPv6 0
+
+# ExtendedErrors: SOCKS replies 0xF0-0xF7 say why an onion was unreachable.
+# IsolateSOCKSAuth: the crawler sends the onion address as SOCKS username,
+# so every site gets its own circuits.
+SocksPort 0.0.0.0:9050 ExtendedErrors IsolateSOCKSAuth
+SocksPolicy accept 10.0.0.0/8, accept 172.16.0.0/12, accept 192.168.0.0/16, reject *
+
+# Prometheus metrics (reachable only on the internal compose network).
+MetricsPort 0.0.0.0:9035
+MetricsPortPolicy accept 10.0.0.0/8, accept 172.16.0.0/12, accept 192.168.0.0/16
+
+# Many sites are opened in parallel through each instance.
+MaxClientCircuitsPending 64
