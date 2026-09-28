@@ -235,12 +235,16 @@ type Job struct {
 // returns the next frontier URL of each. Politeness lives here: a site is due
 // only when its lease has expired and next_allowed_at has passed. Claiming in
 // batches keeps this query, which scans every site, off the per-fetch path.
-func (s *Store) Claim(ctx context.Context, lease time.Duration, n int) ([]*Job, error) {
+//
+// Sites that already have pageCap pages only get homepage and liveness
+// fetches (priority <= 1); their other queued URLs are skipped.
+func (s *Store) Claim(ctx context.Context, lease time.Duration, n, pageCap int) ([]*Job, error) {
 	rows, err := s.db.Query(ctx, `
 		WITH c AS (
 			SELECT s.id FROM sites s
 			WHERE s.next_allowed_at <= now() AND s.lease_until <= now() AND s.status <> 'auth_gated'
-			  AND EXISTS (SELECT 1 FROM frontier f WHERE f.site_id = s.id AND f.next_fetch_at <= now())
+			  AND EXISTS (SELECT 1 FROM frontier f WHERE f.site_id = s.id AND f.next_fetch_at <= now()
+			              AND (s.pages_fetched < $3 OR f.priority <= 1))
 			ORDER BY (s.pages_fetched = 0) DESC, s.next_allowed_at
 			LIMIT $2 FOR UPDATE SKIP LOCKED),
 		l AS (
@@ -248,9 +252,9 @@ func (s *Store) Claim(ctx context.Context, lease time.Duration, n int) ([]*Job, 
 			WHERE sites.id = c.id RETURNING sites.id, sites.onion)
 		SELECT l.id, l.onion, f.url_hash, f.url, f.depth, f.attempts
 		FROM l LEFT JOIN LATERAL (
-			SELECT url_hash, url, depth, attempts FROM frontier
-			WHERE site_id = l.id AND next_fetch_at <= now()
-			ORDER BY priority, next_fetch_at LIMIT 1) f ON true`, lease, n)
+			SELECT fr.url_hash, fr.url, fr.depth, fr.attempts FROM frontier fr JOIN sites st ON st.id = fr.site_id
+			WHERE fr.site_id = l.id AND fr.next_fetch_at <= now() AND (st.pages_fetched < $3 OR fr.priority <= 1)
+			ORDER BY fr.priority, fr.next_fetch_at LIMIT 1) f ON true`, lease, n, pageCap)
 	if err != nil {
 		return nil, err
 	}
@@ -516,4 +520,12 @@ func (s *Store) BlocklistCount(ctx context.Context, source string) (int, error) 
 func (s *Store) RefreshGraph(ctx context.Context) error {
 	_, err := s.db.Exec(ctx, `REFRESH MATERIALIZED VIEW CONCURRENTLY site_edges`)
 	return err
+}
+
+// TrimCapped drops queued URLs of sites that reached the page cap (liveness
+// rechecks and homepages are kept). Returns how many were removed.
+func (s *Store) TrimCapped(ctx context.Context, pageCap int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM frontier f USING sites s
+		WHERE f.site_id = s.id AND s.pages_fetched >= $1 AND f.priority > 1`, pageCap)
+	return tag.RowsAffected(), err
 }

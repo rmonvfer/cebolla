@@ -85,6 +85,7 @@ func (c *Crawler) Run(ctx context.Context) {
 		{30 * time.Second, c.gaugesOnce, "gauges"},
 		{time.Minute, c.poolOnce, "pool"},
 		{10 * time.Minute, c.st.RefreshGraph, "graph"},
+		{10 * time.Minute, c.trimOnce, "trim"},
 	}
 	for _, l := range loops {
 		wg.Go(func() {
@@ -124,7 +125,7 @@ func (c *Crawler) dispatch(ctx context.Context, jobs chan<- *store.Job) {
 			sleep(ctx, 200*time.Millisecond)
 			continue
 		}
-		batch, err := c.st.Claim(ctx, c.cfg.Lease, claimBatch-len(jobs))
+		batch, err := c.st.Claim(ctx, c.cfg.Lease, claimBatch-len(jobs), c.cfg.PageCap)
 		if err != nil {
 			if ctx.Err() == nil {
 				metrics.Errors.WithLabelValues("claim").Inc()
@@ -338,6 +339,14 @@ func (c *Crawler) indexOnce(ctx context.Context) error {
 		metrics.Indexed.Add(float64(len(docs)))
 	}
 	return nil
+}
+
+func (c *Crawler) trimOnce(ctx context.Context) error {
+	n, err := c.st.TrimCapped(ctx, c.cfg.PageCap)
+	if n > 0 {
+		c.log.Info("frontier trimmed for capped sites", "urls", n)
+	}
+	return err
 }
 
 func (c *Crawler) recheckOnce(ctx context.Context) error {

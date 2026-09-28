@@ -306,6 +306,26 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("search bravounique (purged): %d hits, %v", n, err)
 	}
 
+	// Page cap: with a cap of 2, a site stops getting new pages but keeps rechecks.
+	if _, err := db.Exec(ctx, `INSERT INTO frontier (url_hash, url, site_id, depth, priority)
+		SELECT sha256(convert_to('http://x/'||g, 'UTF8')), 'http://`+good+`.onion/x'||g, id, 1, 3
+		FROM sites, generate_series(1, 5) g WHERE onion = $1`, good); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := st.Claim(ctx, time.Minute, 10, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range jobs {
+		if j.Onion == good {
+			t.Errorf("capped site claimed for a regular URL: %s", j.URL)
+		}
+		st.Release(ctx, j.SiteID, 0)
+	}
+	if n, err := st.TrimCapped(ctx, 2); err != nil || n != 5 {
+		t.Errorf("trim: %d %v", n, err)
+	}
+
 	// Liveness: a due check re-queues the homepage.
 	db.Exec(ctx, `UPDATE sites SET next_check_at = now() - interval '1 minute' WHERE onion=$1`, good)
 	if n, err := st.ScheduleRechecks(ctx); err != nil || n != 1 {
