@@ -121,6 +121,20 @@ services:
       postgres: { condition: service_healthy }
     networks: [internal, egress]
 
+  # Read-only web UI over the data. Reach it with an SSH tunnel to port 8088.
+  explorer:
+    image: onion-crawler:latest
+    <<: *hardening
+    command: ["explore"]
+    environment:
+      DATABASE_URL: postgres://crawler:${POSTGRES_PASSWORD}@postgres:5432/crawler?sslmode=disable&pool_max_conns=8
+      OPENSEARCH_URL: https://opensearch:9200
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+    depends_on:
+      crawler: { condition: service_started }
+    ports: ["127.0.0.1:8088:8088"]
+    networks: [internal, ui]
+
   prometheus:
     image: prom/prometheus:v3.15.0
     restart: unless-stopped

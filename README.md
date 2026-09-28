@@ -11,6 +11,7 @@ Text-only crawler and search index for Tor onion services. Runs inside the
 - Postgres stores everything. OpenSearch is the full-text index and can be
   rebuilt from Postgres.
 - Prometheus and Grafana for metrics.
+- `crawler/internal/explore/`: the explorer web UI.
 - `vm/`: scripts to install, finalize and deploy to the VM.
 
 ## Crawl rules
@@ -41,6 +42,17 @@ Site status is `up` (rechecked daily), `flaky` (6 h), `down` (1 h, doubling
 up to 7 days), `dead` (no response for 30 days, monthly) or `auth_gated`
 (needs client authorization, not crawled).
 
+## Explorer
+
+`crawler explore` (compose service `explorer`, port 8088 inside the VM) is a
+read-only web UI: overview, full-text search, site pages (liveness, pages,
+links in and out, entities, near-duplicate homepages, sites sharing payment
+addresses), page text and versions, an interactive link graph, entities
+ranked by how many sites use them, and clusters of near-identical homepages.
+Its database sessions are read-only. Stored text is always escaped and stored
+URLs are shown as text, never as links. The page runs under a CSP that allows
+only its own scripts.
+
 ## Network
 
 The compose `internal` network has no route out. Only `tor` and `seedsync`
@@ -62,8 +74,12 @@ vm/deploy.sh
 # search
 ssh onion 'cd onion-crawler && docker compose run --rm crawler search "query"'
 
-# Grafana on http://localhost:3000, Prometheus on :9090
-ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 onion
+# explorer on http://localhost:8088, Grafana on :3000, Prometheus on :9090
+ssh -N -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 onion
+
+# the same from a laptop, through aleph
+ssh -t -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 aleph \
+  ssh -N -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 onion
 
 # logs
 ssh onion 'cd onion-crawler && docker compose logs -f crawler'

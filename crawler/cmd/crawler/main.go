@@ -3,6 +3,7 @@
 //	run        crawl (default)
 //	seedsync   refresh Ahmia's blocklist and seed lists, daily
 //	search Q   full-text search the index
+//	explore    read-only web UI over the data
 //	migrate    apply database migrations and exit
 package main
 
@@ -21,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"onioncrawler/internal/crawl"
+	"onioncrawler/internal/explore"
 	"onioncrawler/internal/fetch"
 	"onioncrawler/internal/filter"
 	"onioncrawler/internal/index"
@@ -65,6 +67,8 @@ func main() {
 		err = run(ctx, log)
 	case "seedsync":
 		err = seedsync(ctx, log)
+	case "explore":
+		err = runExplore(ctx, log)
 	case "search":
 		err = search(ctx, strings.Join(os.Args[2:], " "))
 	case "migrate":
@@ -74,7 +78,7 @@ func main() {
 			st.Close()
 		}
 	default:
-		err = fmt.Errorf("unknown command %q (run, seedsync, search, migrate)", cmd)
+		err = fmt.Errorf("unknown command %q (run, seedsync, search, explore, migrate)", cmd)
 	}
 	if err != nil && ctx.Err() == nil {
 		log.Error("fatal", "cmd", cmd, "err", err)
@@ -216,6 +220,7 @@ func search(ctx context.Context, q string) error {
 	for _, h := range hits {
 		fmt.Printf("%s\n  %s\n", h.Title, h.URL)
 		for _, s := range h.Snippet {
+			s = strings.NewReplacer(index.HighlightStart, "[", index.HighlightEnd, "]").Replace(s)
 			fmt.Printf("  … %s …\n", strings.Join(strings.Fields(s), " "))
 		}
 		fmt.Println()
@@ -230,4 +235,14 @@ func serveMetrics(addr string, log *slog.Logger) {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("metrics server", "err", err)
 	}
+}
+
+func runExplore(ctx context.Context, log *slog.Logger) error {
+	ix := index.New(env("OPENSEARCH_URL", "https://opensearch:9200"), env("OPENSEARCH_USER", "admin"), os.Getenv("OPENSEARCH_PASSWORD"))
+	srv, err := explore.Open(ctx, env("DATABASE_URL", ""), ix, log)
+	if err != nil {
+		return err
+	}
+	defer srv.Close()
+	return srv.Serve(ctx, env("EXPLORE_ADDR", ":8088"))
 }

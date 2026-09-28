@@ -84,6 +84,7 @@ func (c *Crawler) Run(ctx context.Context) {
 		{5 * time.Minute, c.blocklistOnce, "blocklist"},
 		{30 * time.Second, c.gaugesOnce, "gauges"},
 		{time.Minute, c.poolOnce, "pool"},
+		{10 * time.Minute, c.st.RefreshGraph, "graph"},
 	}
 	for _, l := range loops {
 		wg.Go(func() {

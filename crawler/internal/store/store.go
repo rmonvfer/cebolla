@@ -510,3 +510,10 @@ func (s *Store) BlocklistCount(ctx context.Context, source string) (int, error) 
 	err := s.db.QueryRow(ctx, `SELECT count(*) FROM blocklist WHERE source = $1`, source).Scan(&n)
 	return n, err
 }
+
+// RefreshGraph recomputes the site_edges materialized view (the site-level
+// link graph the explorer reads).
+func (s *Store) RefreshGraph(ctx context.Context) error {
+	_, err := s.db.Exec(ctx, `REFRESH MATERIALIZED VIEW CONCURRENTLY site_edges`)
+	return err
+}

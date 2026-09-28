@@ -19,6 +19,12 @@ import (
 
 const Name = "pages"
 
+// Search highlight markers.
+const (
+	HighlightStart = "\u0001"
+	HighlightEnd   = "\u0002"
+)
+
 type Client struct {
 	base, user, pass string
 	hc               *http.Client
@@ -152,6 +158,8 @@ func (c *Client) DeleteSite(ctx context.Context, siteID int64) error {
 }
 
 type Hit struct {
+	PageID  int64    `json:"page_id"`
+	SiteID  int64    `json:"site_id"`
 	Onion   string   `json:"onion"`
 	URL     string   `json:"url"`
 	Title   string   `json:"title"`
@@ -159,13 +167,23 @@ type Hit struct {
 }
 
 func (c *Client) Search(ctx context.Context, query string, size int) ([]Hit, int, error) {
+	return c.SearchFrom(ctx, query, 0, size)
+}
+
+func (c *Client) SearchFrom(ctx context.Context, query string, from, size int) ([]Hit, int, error) {
 	q, _ := json.Marshal(map[string]any{
+		"from":    from,
 		"size":    size,
-		"_source": []string{"onion", "url", "title"},
+		"_source": []string{"site_id", "onion", "url", "title"},
 		"query": map[string]any{"multi_match": map[string]any{
 			"query": query, "fields": []string{"title^3", "text"},
 		}},
-		"highlight": map[string]any{"fields": map[string]any{"text": map[string]any{"fragment_size": 160, "number_of_fragments": 2}}},
+		// Control characters as markers: snippets are untrusted page text, so
+		// callers escape them first and then turn the markers into highlights.
+		"highlight": map[string]any{
+			"pre_tags": []string{HighlightStart}, "post_tags": []string{HighlightEnd},
+			"fields": map[string]any{"text": map[string]any{"fragment_size": 160, "number_of_fragments": 2}},
+		},
 	})
 	out, code, err := c.do(ctx, "POST", "/"+Name+"/_search", "application/json", q)
 	if err != nil {
@@ -180,6 +198,7 @@ func (c *Client) Search(ctx context.Context, query string, size int) ([]Hit, int
 				Value int `json:"value"`
 			} `json:"total"`
 			Hits []struct {
+				ID        string              `json:"_id"`
 				Source    Hit                 `json:"_source"`
 				Highlight map[string][]string `json:"highlight"`
 			} `json:"hits"`
@@ -191,6 +210,7 @@ func (c *Client) Search(ctx context.Context, query string, size int) ([]Hit, int
 	hits := make([]Hit, 0, len(r.Hits.Hits))
 	for _, h := range r.Hits.Hits {
 		h.Source.Snippet = h.Highlight["text"]
+		h.Source.PageID, _ = strconv.ParseInt(h.ID, 10, 64)
 		hits = append(hits, h.Source)
 	}
 	return hits, r.Hits.Total.Value, nil

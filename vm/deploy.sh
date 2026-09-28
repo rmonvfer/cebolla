@@ -36,5 +36,7 @@ docker compose up -d
 docker compose ps --format 'table {{.Service}}\t{{.Status}}'
 EOF
 echo
-echo "Grafana:    ssh -N -L 3000:127.0.0.1:3000 onion   then http://localhost:3000 (admin / GRAFANA_PASSWORD in ~/onion-crawler/.env on the VM)"
+echo "Explorer + Grafana, from aleph:  ssh -N -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 onion"
+echo "  from a laptop, through aleph:   ssh -t -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 aleph ssh -N -L 8088:127.0.0.1:8088 -L 3000:127.0.0.1:3000 onion"
+echo "  then http://localhost:8088 (explorer) and http://localhost:3000 (Grafana: admin / GRAFANA_PASSWORD in ~/onion-crawler/.env on the VM)"
 echo "Search:     ssh onion 'cd onion-crawler && docker compose run --rm crawler search \"your query\"'"
