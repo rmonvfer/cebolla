@@ -335,8 +335,10 @@ async function page(id, p) {
 
 function drawGraph(el, g, opts = {}) {
   // Sites whose links all point outside the selection would float as isolated dots.
-  const linked = new Set(g.edges.flatMap((e) => [e.s, e.t]));
-  g = { ...g, nodes: g.nodes.filter((n) => linked.has(n.id) || n.id === opts.center) };
+  const known = new Set(g.nodes.map((n) => n.id));
+  const edges = g.edges.filter((e) => known.has(e.s) && known.has(e.t));
+  const linked = new Set(edges.flatMap((e) => [e.s, e.t]));
+  g = { nodes: g.nodes.filter((n) => linked.has(n.id) || n.id === opts.center), edges };
   const maxIn = Math.max(1, ...g.nodes.map((n) => n.indeg));
   const labelled = new Set([...g.nodes].sort((a, b) => b.indeg - a.indeg).slice(0, opts.mini ? 12 : 40).map((n) => n.id));
   if (opts.center) labelled.add(opts.center);

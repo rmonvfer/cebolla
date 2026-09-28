@@ -466,8 +466,14 @@ func (s *Server) graph(ctx context.Context, r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// site_edges is refreshed every 10 minutes, so it can still hold edges to
+	// sites purged since. Only return edges whose ends are both in nodes.
+	present := make([]int64, len(nodes))
+	for i, n := range nodes {
+		present[i] = n.ID
+	}
 	erows, err := s.db.Query(ctx, `SELECT src_site_id, dst_site_id, n_links FROM site_edges
-		WHERE src_site_id = ANY($1) AND dst_site_id = ANY($1)`, ids)
+		WHERE src_site_id = ANY($1) AND dst_site_id = ANY($1)`, present)
 	if err != nil {
 		return nil, err
 	}
