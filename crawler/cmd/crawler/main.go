@@ -163,6 +163,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	fcfg := fetch.DefaultConfig()
 	fcfg.MaxBytes = int64(envInt("MAX_BYTES", int(fcfg.MaxBytes)))
 	fcfg.UserAgent = env("USER_AGENT", fcfg.UserAgent)
+	fcfg.DialTimeout = envDur("DIAL_TIMEOUT", fcfg.DialTimeout)
 
 	cfg := crawl.Config{
 		Workers:      envInt("WORKERS", 64),

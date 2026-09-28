@@ -86,7 +86,7 @@ services:
     <<: *hardening
     command: ["run"]
     environment: &crawler-env
-      DATABASE_URL: postgres://crawler:${POSTGRES_PASSWORD}@postgres:5432/crawler?sslmode=disable
+      DATABASE_URL: postgres://crawler:${POSTGRES_PASSWORD}@postgres:5432/crawler?sslmode=disable&pool_max_conns=${DB_POOL:-32}
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
       TOR_PROXIES: tor:9050
@@ -95,6 +95,7 @@ services:
       PER_SITE_DELAY: ${PER_SITE_DELAY:-8s}
       MAX_DEPTH: ${MAX_DEPTH:-3}
       PAGE_CAP: ${PAGE_CAP:-200}
+      DIAL_TIMEOUT: ${DIAL_TIMEOUT:-45s}
       REPORT_DIR: /report
       REPORT_AGE_RECIPIENT: ${REPORT_AGE_RECIPIENT:-}
     volumes:
