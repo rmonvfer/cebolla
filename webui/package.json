@@ -26,7 +26,8 @@
     "sigma": "^3.0.0",
     "graphology": "^0.25.4",
     "graphology-layout-forceatlas2": "^0.10.1",
-    "graphology-communities-louvain": "^2.0.1"
+    "graphology-communities-louvain": "^2.0.1",
+    "graphology-layout-noverlap": "^0.4.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

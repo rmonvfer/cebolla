@@ -5,6 +5,7 @@ import Graph from 'graphology';
 import Sigma from 'sigma';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import louvain from 'graphology-communities-louvain';
+import noverlap from 'graphology-layout-noverlap';
 import { STATUS_COLOR, shortOnion } from '@/lib/format';
 
 export interface GNode { id: number; onion: string; title: string; status: string; indeg: number; outdeg: number; component?: number | null; }
@@ -37,12 +38,10 @@ export function GraphCanvas({
     const g = new Graph({ multi: false, type: 'directed' });
     shown.forEach((n) => {
       const isCenter = n.id === center;
-      const r = Math.sqrt(Math.random());
-      const a = Math.random() * 2 * Math.PI;
       g.addNode(String(n.id), {
-        x: r * Math.cos(a),
-        y: r * Math.sin(a),
-        size: isCenter ? 12 : 2.5 + Math.sqrt(n.indeg / maxIn) * (center ? 9 : 16),
+        x: Math.random(),
+        y: Math.random(),
+        size: isCenter ? 12 : 3 + Math.sqrt(n.indeg / maxIn) * (center ? 9 : 15),
         label: n.title || shortOnion(n.onion),
         color: MUTED,
         n,
@@ -53,35 +52,50 @@ export function GraphCanvas({
       if (g.hasNode(s) && g.hasNode(t) && !g.hasEdge(s, t)) g.addEdge(s, t, { size: 0.4, color: '#241d2c' });
     });
 
-    // Detect communities (modularity) on the shown subgraph, then colour the
-    // biggest ones. Weakly-connected components collapse the whole graph into
-    // one blob; Louvain finds the real sub-structure inside it.
-    if (colorBy === 'community' && g.order > 2) {
+    // Detect communities (modularity) on the shown subgraph. Weakly-connected
+    // components collapse the whole graph into one blob; Louvain finds the real
+    // sub-structure inside it.
+    const communityRank = new Map<number, number>(); // community id -> dense rank by size
+    if (g.order > 2) {
       try { louvain.assign(g, { resolution: 1 }); } catch {}
       const size = new Map<number, number>();
       g.forEachNode((_, at: any) => { if (at.community != null) size.set(at.community, (size.get(at.community) ?? 0) + 1); });
-      const top = new Map<number, string>();
-      [...size.entries()].sort((a, b) => b[1] - a[1]).slice(0, COMMUNITY.length).forEach(([c], i) => top.set(c, COMMUNITY[i]));
-      g.forEachNode((id, at: any) => g.setNodeAttribute(id, 'color', top.get(at.community) ?? MUTED));
-    } else {
-      shown.forEach((n) => g.setNodeAttribute(String(n.id), 'color', STATUS_COLOR[n.status] ?? MUTED));
+      [...size.entries()].sort((a, b) => b[1] - a[1]).forEach(([c], i) => communityRank.set(c, i));
     }
+
+    // Colour, and seed each community in its own sector of a wide circle so the
+    // force layout pulls the clusters apart instead of into one ball.
+    const K = Math.max(1, communityRank.size);
+    g.forEachNode((id, at: any) => {
+      const rank = communityRank.get(at.community);
+      const color = colorBy === 'status'
+        ? STATUS_COLOR[(at.n as GNode).status] ?? MUTED
+        : (rank != null && rank < COMMUNITY.length ? COMMUNITY[rank] : MUTED);
+      g.setNodeAttribute(id, 'color', color);
+      if (colorBy !== 'status' && rank != null) {
+        const ang = (rank / K) * 2 * Math.PI;
+        g.setNodeAttribute(id, 'x', Math.cos(ang) * 10 + (Math.random() - 0.5) * 2);
+        g.setNodeAttribute(id, 'y', Math.sin(ang) * 10 + (Math.random() - 0.5) * 2);
+      }
+    });
     if (center && g.hasNode(String(center))) { g.setNodeAttribute(String(center), 'color', '#d76b96'); g.setNodeAttribute(String(center), 'highlighted', true); }
 
     const N = g.order;
+    // Spread with strong repulsion + weak gravity, then push overlapping nodes
+    // apart so nothing clumps.
     forceAtlas2.assign(g, {
-      iterations: N > 700 ? 320 : 550,
+      iterations: N > 700 ? 250 : 400,
       settings: {
-        linLogMode: true,               // pulls each community into its own region
+        linLogMode: false,
         outboundAttractionDistribution: false,
         adjustSizes: true,
-        barnesHutOptimize: N > 300,
-        scalingRatio: 6,
-        gravity: 1.1,                   // fills the centre instead of a hollow ring
-        slowDown: 4,
-        edgeWeightInfluence: 0.5,
+        barnesHutOptimize: N > 500,
+        scalingRatio: 28,
+        gravity: 0.35,
+        slowDown: 6,
       },
     });
+    noverlap.assign(g, { maxIterations: 200, settings: { margin: 5, ratio: 1.1, expansion: 1.3, gridSize: 20, speed: 4 } });
 
     const renderer = new Sigma(g, ref.current, {
       renderLabels: true,
