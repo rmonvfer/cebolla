@@ -11,7 +11,8 @@ Text-only crawler and search index for Tor onion services. Runs inside the
 - Postgres stores everything. OpenSearch is the full-text index and can be
   rebuilt from Postgres.
 - Prometheus and Grafana for metrics.
-- `crawler/internal/explore/`: the explorer web UI.
+- `crawler/internal/explore/`: the read-only JSON API (Go).
+- `webui/`: the web UI — a Next.js app (shadcn/ui, TanStack Query/Table, Recharts, cytoscape) that proxies `/api` to the explorer service.
 - `vm/`: scripts to install, finalize and deploy to the VM.
 
 ## Crawl rules
@@ -57,16 +58,14 @@ up to 7 days), `dead` (no response for 30 days, monthly) or `auth_gated`
 
 ## Explorer
 
-`crawler explore` (compose service `explorer`, port 8088 inside the VM) is a
-read-only web UI: overview, full-text search, site pages (liveness, pages,
-links in and out, entities, near-duplicate homepages, sites sharing payment
+The `webui` service (Next.js, published on 127.0.0.1:8088 in the VM) is the
+UI: overview with the live crawl, full-text search, service pages (liveness,
+pages, links in and out, entities, near-duplicate homepages, shared
 addresses), page text and versions, an interactive link graph, entities
-ranked by how many sites use them, clusters of near-identical homepages, and
-an Analytics page with live crawl telemetry (from Prometheus) and structural
-analysis charts (uPlot).
-Its database sessions are read-only. Stored text is always escaped and stored
-URLs are shown as text, never as links. The page runs under a CSP that allows
-only its own scripts.
+ranked by how many services use them, clusters of near-identical homepages,
+and an Analytics page with live telemetry (Prometheus) and structural charts.
+It proxies `/api` to the `explorer` service (Go), whose database sessions are
+read-only; the `explorer` is internal-only and never published.
 
 ## Network
 

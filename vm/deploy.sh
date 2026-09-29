@@ -17,7 +17,7 @@ if [ ! -f "$AGEKEY" ]; then
 fi
 RECIPIENT=$(age-keygen -y "$AGEKEY")
 
-rsync -a --delete --exclude .git --exclude .env --exclude crawler/go.sh "$ROOT/" onion:onion-crawler/
+rsync -a --delete --exclude .git --exclude .env --exclude crawler/go.sh --exclude 'node_modules' --exclude 'webui/.next' "$ROOT/" onion:onion-crawler/
 
 ssh onion RECIPIENT="$RECIPIENT" bash -s <<'EOF'
 set -euo pipefail
