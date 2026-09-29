@@ -4,6 +4,7 @@ import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'r
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { PromLine } from '@/lib/api';
 import { colorFor, compact } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 type Point = Record<string, number | null>;
 
@@ -53,7 +54,7 @@ interface ChartProps {
 export function StackedArea({ data, keys, height = 180, yFmt = compact, xMode = 'time', className }: ChartProps) {
   const config = cfgFor(keys);
   return (
-    <ChartContainer config={config} className={className} style={{ height }}>
+    <ChartContainer config={config} className={cn('!block !aspect-auto w-full', className)} style={{ height, width: '100%' }}>
       <AreaChart data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
         <defs>
           {keys.map((k, i) => (
@@ -78,7 +79,7 @@ export function StackedArea({ data, keys, height = 180, yFmt = compact, xMode = 
 export function Lines({ data, keys, height = 180, yFmt = compact, xMode = 'time', className, fill }: ChartProps & { fill?: boolean }) {
   const config = cfgFor(keys);
   return (
-    <ChartContainer config={config} className={className} style={{ height }}>
+    <ChartContainer config={config} className={cn('!block !aspect-auto w-full', className)} style={{ height, width: '100%' }}>
       <LineChart data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={xMode === 'day' ? dayTick : timeTick} tickLine={false} axisLine={false} minTickGap={40} />

@@ -5,7 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { apiGet, type Row } from '@/lib/api';
-import { GraphCanvas, type GNode } from '@/components/graph-canvas';
+import dynamic from 'next/dynamic';
+import { type GNode } from '@/components/graph-canvas';
+const GraphCanvas = dynamic(() => import('@/components/graph-canvas').then((m) => m.GraphCanvas), { ssr: false });
 import { DataTable } from '@/components/data-table';
 import { Copyable, Ledger, OnionAddr, Panel, PageTitle, SectionLabel, SiteName, StatusPill } from '@/components/bits';
 import { compact, datetime, day, num, ago } from '@/lib/format';
@@ -80,7 +82,7 @@ export default function SitePage({ params }: { params: Promise<{ id: string }> }
         </div>
         <div>
           <SectionLabel hint="one hop">Neighbourhood</SectionLabel>
-          {neigh.data && <GraphCanvas nodes={neigh.data.nodes} edges={neigh.data.edges} center={Number(id)} height={300} labelTop={12} />}
+          {neigh.data && <GraphCanvas nodes={neigh.data.nodes} edges={neigh.data.edges} center={Number(id)} height={300} colorBy="status" />}
         </div>
 
         <div>

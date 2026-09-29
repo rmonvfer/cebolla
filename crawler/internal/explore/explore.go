@@ -399,12 +399,13 @@ func (s *Server) entity(ctx context.Context, r *http.Request) (any, error) {
 // ---- Graph ----------------------------------------------------------------
 
 type gnode struct {
-	ID     int64  `json:"id"`
-	Onion  string `json:"onion"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-	In     int64  `json:"indeg"`
-	Out    int64  `json:"outdeg"`
+	ID        int64  `json:"id"`
+	Onion     string `json:"onion"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	In        int64  `json:"indeg"`
+	Out       int64  `json:"outdeg"`
+	Component *int   `json:"component"`
 }
 
 type gedge struct {
@@ -474,8 +475,8 @@ func (s *Server) graph(ctx context.Context, r *http.Request) (any, error) {
 	}
 
 	nrows, err := s.db.Query(ctx, `SELECT s.id, s.onion, coalesce(s.title, ''), s.status::text,
-		coalesce(di.indeg, 0), coalesce(do_.outdeg, 0)
-		FROM sites s `+degreeSQL+` WHERE s.id = ANY($1)`, ids)
+		coalesce(di.indeg, 0), coalesce(do_.outdeg, 0), an.component
+		FROM sites s `+degreeSQL+` LEFT JOIN site_analysis an ON an.site_id = s.id WHERE s.id = ANY($1)`, ids)
 	if err != nil {
 		return nil, err
 	}
