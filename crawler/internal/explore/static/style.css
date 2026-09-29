@@ -123,3 +123,29 @@ pre.text {
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: var(--muted); }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; }
+
+/* Charts (uPlot) */
+.uplot { font-family: var(--sans); }
+.u-title { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+.u-legend { font-size: 12px; color: var(--muted); }
+.u-legend .u-marker { width: 9px; height: 9px; border-radius: 2px; }
+.u-legend .u-value { color: var(--text); font-variant-numeric: tabular-nums; }
+.u-legend th { font-weight: 500; }
+.u-axis { color: var(--faint); }
+.u-select { background: #82aaff22; }
+.u-cursor-x, .u-cursor-y { border-color: #ffffff33 !important; }
+.chartgrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.chartgrid.wide { grid-template-columns: 1fr; }
+.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 6px; overflow: hidden; }
+.chart h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+.chart .hint { color: var(--faint); font-size: 12px; margin-bottom: 8px; }
+.dist { display: flex; flex-direction: column; gap: 6px; }
+.dist .row { display: grid; grid-template-columns: 90px 1fr 60px; align-items: center; gap: 10px; font-size: 12.5px; }
+.dist .bar { height: 16px; background: var(--accent-2); border-radius: 3px; min-width: 2px; }
+.dist .row .n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rangesel { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.rangesel a { padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.rangesel a.on { color: var(--text); border-color: var(--muted); }
+.section-title { display: flex; align-items: baseline; gap: 12px; margin: 22px 0 12px; }
+.section-title h2 { color: var(--text); font-size: 15px; text-transform: none; letter-spacing: 0; }
+.section-title .hint { color: var(--faint); font-size: 12.5px; }

@@ -32,9 +32,11 @@ import (
 var static embed.FS
 
 type Server struct {
-	db  *pgxpool.Pool
-	ix  *index.Client
-	log *slog.Logger
+	db      *pgxpool.Pool
+	ix      *index.Client
+	log     *slog.Logger
+	promURL string
+	hc      *http.Client
 
 	mu          sync.Mutex
 	clusters    []cluster
@@ -43,7 +45,7 @@ type Server struct {
 }
 
 // Open connects with every session forced read-only.
-func Open(ctx context.Context, dsn string, ix *index.Client, log *slog.Logger) (*Server, error) {
+func Open(ctx context.Context, dsn, promURL string, ix *index.Client, log *slog.Logger) (*Server, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -56,7 +58,7 @@ func Open(ctx context.Context, dsn string, ix *index.Client, log *slog.Logger) (
 	if err != nil {
 		return nil, err
 	}
-	return &Server{db: db, ix: ix, log: log}, nil
+	return &Server{db: db, ix: ix, log: log, promURL: promURL, hc: &http.Client{Timeout: 20 * time.Second}}, nil
 }
 
 func (s *Server) Close() { s.db.Close() }
@@ -74,6 +76,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/entity", s.api(s.entity))
 	mux.HandleFunc("GET /api/graph", s.api(s.graph))
 	mux.HandleFunc("GET /api/clusters", s.api(s.clustersAPI))
+	mux.HandleFunc("GET /api/analytics", s.api(s.analytics))
+	mux.HandleFunc("GET /api/prom", s.api(s.prom))
 	return secure(mux)
 }
 
@@ -140,6 +144,14 @@ func pathID(r *http.Request) (int64, error) {
 		return 0, errNotFound
 	}
 	return id, nil
+}
+
+func intParamDef(v string, def int) int {
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func intParam(r *http.Request, k string, def, max int) int {
@@ -219,6 +231,7 @@ func (s *Server) search(ctx context.Context, r *http.Request) (any, error) {
 // ---- Sites ----------------------------------------------------------------
 
 var siteSorts = map[string]string{
+	"rank":   "coalesce(an.pagerank, 0) DESC, s.id",
 	"indeg":  "coalesce(di.indeg, 0) DESC, s.id",
 	"outdeg": "coalesce(do_.outdeg, 0) DESC, s.id",
 	"pages":  "s.pages_fetched DESC, s.id",
@@ -233,12 +246,15 @@ func (s *Server) sites(ctx context.Context, r *http.Request) (any, error) {
 		order = siteSorts["indeg"]
 	}
 	return s.rows(ctx, `SELECT `+siteCols+`, s.first_seen, s.last_ok, s.pages_fetched,
-		coalesce(di.indeg, 0) AS indeg, coalesce(do_.outdeg, 0) AS outdeg
-		FROM sites s `+degreeSQL+`
+		coalesce(di.indeg, 0) AS indeg, coalesce(do_.outdeg, 0) AS outdeg, an.pagerank
+		FROM sites s `+degreeSQL+` LEFT JOIN site_analysis an ON an.site_id = s.id
 		WHERE ($1 = '' OR s.status::text = $1)
 		  AND ($2 = '' OR s.title ILIKE '%' || $2 || '%' OR s.onion LIKE lower($2) || '%')
+		  AND ($4 < 0 OR an.component = $4)
+		  AND ($5 < 0 OR an.operator = $5)
 		ORDER BY `+order+` LIMIT 100 OFFSET $3`,
-		qs.Get("status"), strings.TrimSpace(qs.Get("q")), intParam(r, "offset", 0, 1_000_000))
+		qs.Get("status"), strings.TrimSpace(qs.Get("q")), intParam(r, "offset", 0, 1_000_000),
+		intParamDef(qs.Get("component"), -1), intParamDef(qs.Get("operator"), -1))
 }
 
 func (s *Server) site(ctx context.Context, r *http.Request) (any, error) {
@@ -249,8 +265,9 @@ func (s *Server) site(ctx context.Context, r *http.Request) (any, error) {
 	out := map[string]any{}
 	if out["site"], err = s.row(ctx, `SELECT `+siteCols+`, s.discovered_via, s.first_seen, s.last_seen, s.last_ok,
 		s.consecutive_failures, s.next_check_at, coalesce(s.server, '') AS server, s.pages_fetched,
-		coalesce(di.indeg, 0) AS indeg, coalesce(do_.outdeg, 0) AS outdeg
-		FROM sites s `+degreeSQL+` WHERE s.id = $1`, id); err != nil {
+		coalesce(di.indeg, 0) AS indeg, coalesce(do_.outdeg, 0) AS outdeg,
+		an.pagerank, an.component, an.operator
+		FROM sites s `+degreeSQL+` LEFT JOIN site_analysis an ON an.site_id = s.id WHERE s.id = $1`, id); err != nil {
 		return nil, err
 	}
 	if out["uptime"], err = s.rows(ctx, `SELECT ts::date AS day,
@@ -630,4 +647,96 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		return fmt.Errorf("explorer: %w", err)
 	}
 	return nil
+}
+
+// analytics returns structural analytics computed from Postgres and the
+// site_analysis table (PageRank, components, operator clusters).
+func (s *Server) analytics(ctx context.Context, r *http.Request) (any, error) {
+	out := map[string]any{}
+	var err error
+
+	// Discovery curve: sites first seen per day, with running total.
+	if out["discovery"], err = s.rows(ctx, `
+		SELECT d::date AS day, n, sum(n) OVER (ORDER BY d) AS total FROM (
+			SELECT date_trunc('day', first_seen) d, count(*) n FROM sites GROUP BY 1) x ORDER BY d`); err != nil {
+		return nil, err
+	}
+	// Pages stored per day (cumulative).
+	if out["pages"], err = s.rows(ctx, `
+		SELECT d::date AS day, n, sum(n) OVER (ORDER BY d) AS total FROM (
+			SELECT date_trunc('day', first_fetched) d, count(*) n FROM pages GROUP BY 1) x ORDER BY d`); err != nil {
+		return nil, err
+	}
+	// Fetch outcomes per hour (last 7 days), collapsed into a few buckets.
+	if out["outcomes"], err = s.rows(ctx, `
+		SELECT date_trunc('hour', ts) AS t,
+			count(*) FILTER (WHERE outcome = 'ok') AS ok,
+			count(*) FILTER (WHERE outcome = 'http_error') AS http_error,
+			count(*) FILTER (WHERE outcome = 'desc_not_found') AS offline,
+			count(*) FILTER (WHERE outcome = 'timeout') AS timeout,
+			count(*) FILTER (WHERE outcome NOT IN ('ok','http_error','desc_not_found','timeout')) AS other
+		FROM fetch_log WHERE ts > now() - interval '7 days' GROUP BY 1 ORDER BY 1`); err != nil {
+		return nil, err
+	}
+	// Latency percentiles per hour for successful fetches.
+	if out["latency"], err = s.rows(ctx, `
+		SELECT date_trunc('hour', ts) AS t,
+			percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS p50,
+			percentile_cont(0.9) WITHIN GROUP (ORDER BY latency_ms) AS p90,
+			percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) AS p99
+		FROM fetch_log WHERE ts > now() - interval '3 days' AND outcome = 'ok' AND latency_ms IS NOT NULL
+		GROUP BY 1 ORDER BY 1`); err != nil {
+		return nil, err
+	}
+	// Current status split and entity kinds.
+	if out["status"], err = s.rows(ctx, `SELECT status::text AS status, count(*) AS n FROM sites GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+		return nil, err
+	}
+	if out["entity_kinds"], err = s.rows(ctx, `SELECT kind, count(DISTINCT value) AS distinct, count(DISTINCT site_id) AS sites FROM entities GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+		return nil, err
+	}
+	// Depth distribution of stored pages.
+	if out["depth"], err = s.rows(ctx, `SELECT depth, count(*) AS n FROM pages GROUP BY 1 ORDER BY 1`); err != nil {
+		return nil, err
+	}
+	// Pages-per-site histogram.
+	if out["site_sizes"], err = s.rows(ctx, `
+		SELECT bucket, count(*) AS sites FROM (
+			SELECT CASE WHEN pages_fetched = 0 THEN '0' WHEN pages_fetched = 1 THEN '1'
+				WHEN pages_fetched <= 5 THEN '2-5' WHEN pages_fetched <= 20 THEN '6-20'
+				WHEN pages_fetched <= 100 THEN '21-100' ELSE '100+' END AS bucket,
+			CASE WHEN pages_fetched = 0 THEN 0 WHEN pages_fetched = 1 THEN 1 WHEN pages_fetched <= 5 THEN 2
+				WHEN pages_fetched <= 20 THEN 3 WHEN pages_fetched <= 100 THEN 4 ELSE 5 END AS ord
+			FROM sites) x GROUP BY bucket, ord ORDER BY ord`); err != nil {
+		return nil, err
+	}
+
+	// --- Graph analysis (from site_analysis) ---
+	a, err := s.row(ctx, `SELECT
+		(SELECT count(*) FROM site_analysis) AS analysed,
+		(SELECT count(DISTINCT component) FROM site_analysis) AS components,
+		(SELECT count(DISTINCT operator) FROM site_analysis WHERE operator IS NOT NULL) AS operators,
+		(SELECT max(updated_at) FROM site_analysis) AS updated_at`)
+	if err != nil {
+		return nil, err
+	}
+	out["graph"] = a
+	if out["top_rank"], err = s.rows(ctx, `SELECT `+siteCols+`, a.pagerank, coalesce(di.indeg,0) AS indeg
+		FROM site_analysis a JOIN sites s ON s.id = a.site_id `+degreeSQL+`
+		ORDER BY a.pagerank DESC LIMIT 25`); err != nil {
+		return nil, err
+	}
+	if out["components"], err = s.rows(ctx, `SELECT component, count(*) AS sites,
+		(SELECT coalesce(s.title, s.onion) FROM site_analysis a2 JOIN sites s ON s.id = a2.site_id
+		 WHERE a2.component = a.component ORDER BY a2.pagerank DESC LIMIT 1) AS top
+		FROM site_analysis a WHERE component IS NOT NULL GROUP BY component ORDER BY sites DESC LIMIT 15`); err != nil {
+		return nil, err
+	}
+	out["operators"], err = s.rows(ctx, `SELECT a.operator, count(*) AS sites,
+		(SELECT coalesce(s.title, s.onion) FROM site_analysis a2 JOIN sites s ON s.id = a2.site_id
+		 WHERE a2.operator = a.operator ORDER BY a2.pagerank DESC LIMIT 1) AS top,
+		(SELECT string_agg(DISTINCT kind, ',') FROM entities e JOIN site_analysis a3 ON a3.site_id = e.site_id
+		 WHERE a3.operator = a.operator AND e.kind <> 'onion') AS kinds
+		FROM site_analysis a WHERE operator IS NOT NULL GROUP BY a.operator ORDER BY sites DESC LIMIT 25`)
+	return out, err
 }

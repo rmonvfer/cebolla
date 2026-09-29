@@ -36,6 +36,19 @@ Text-only crawler and search index for Tor onion services. Runs inside the
   workers.
 - Max depth 3, max 200 pages per site.
 
+## Analysis
+
+`internal/analyze` recomputes structural analytics every 15 minutes (and via
+`crawler analyze` on demand) into `site_analysis`:
+
+- **PageRank** over the site link graph (which sites matter, not just raw
+  in-degree).
+- **Weakly-connected components** (how the space breaks into islands).
+- **Shared-identifier clusters**: sites joined by a common PGP key or contact
+  email. This surfaces mirror networks and, at smaller sizes, likely single
+  operators. Payment addresses are deliberately excluded because shared
+  payment processors chain unrelated shops together.
+
 Each onion is pinned to one tor instance so its circuit is reused. Tor's
 extended SOCKS errors distinguish an offline service from an overloaded one.
 Site status is `up` (rechecked daily), `flaky` (6 h), `down` (1 h, doubling
@@ -48,7 +61,9 @@ up to 7 days), `dead` (no response for 30 days, monthly) or `auth_gated`
 read-only web UI: overview, full-text search, site pages (liveness, pages,
 links in and out, entities, near-duplicate homepages, sites sharing payment
 addresses), page text and versions, an interactive link graph, entities
-ranked by how many sites use them, and clusters of near-identical homepages.
+ranked by how many sites use them, clusters of near-identical homepages, and
+an Analytics page with live crawl telemetry (from Prometheus) and structural
+analysis charts (uPlot).
 Its database sessions are read-only. Stored text is always escaped and stored
 URLs are shown as text, never as links. The page runs under a CSP that allows
 only its own scripts.

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"onioncrawler/internal/analyze"
 	"onioncrawler/internal/entities"
 	"onioncrawler/internal/fetch"
 	"onioncrawler/internal/filter"
@@ -42,6 +43,7 @@ type Crawler struct {
 	flt  *filter.Filter
 	bl   *Blocklist
 	rep  *report.Queue
+	an   *analyze.Analyzer
 	log  *slog.Logger
 }
 
@@ -54,6 +56,7 @@ var transient = map[string]bool{
 func New(cfg Config, st *store.Store, ix *index.Client, fcfg fetch.Config, pool *fetch.Pool,
 	flt *filter.Filter, bl *Blocklist, rep *report.Queue, log *slog.Logger) *Crawler {
 	c := &Crawler{cfg: cfg, st: st, ix: ix, pool: pool, flt: flt, bl: bl, rep: rep, log: log}
+	c.an = analyze.New(st.Pool())
 	c.f = fetch.New(fcfg, pool, c.guard)
 	return c
 }
@@ -86,6 +89,7 @@ func (c *Crawler) Run(ctx context.Context) {
 		{time.Minute, c.poolOnce, "pool"},
 		{10 * time.Minute, c.st.RefreshGraph, "graph"},
 		{10 * time.Minute, c.trimOnce, "trim"},
+		{15 * time.Minute, c.analyzeOnce, "analyze"},
 	}
 	for _, l := range loops {
 		wg.Go(func() {
@@ -338,6 +342,15 @@ func (c *Crawler) indexOnce(ctx context.Context) error {
 		}
 		metrics.Indexed.Add(float64(len(docs)))
 	}
+	return nil
+}
+
+func (c *Crawler) analyzeOnce(ctx context.Context) error {
+	r, err := c.an.Run(ctx)
+	if err != nil {
+		return err
+	}
+	c.log.Info("analysis updated", "sites", r.Sites, "edges", r.Edges, "components", r.Components, "operators", r.Operators, "took", r.Took.Round(time.Millisecond))
 	return nil
 }
 

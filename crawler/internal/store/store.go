@@ -529,3 +529,6 @@ func (s *Store) TrimCapped(ctx context.Context, pageCap int) (int64, error) {
 		WHERE f.site_id = s.id AND s.pages_fetched >= $1 AND f.priority > 1`, pageCap)
 	return tag.RowsAffected(), err
 }
+
+// Pool exposes the underlying pool for read-mostly analytics helpers.
+func (s *Store) Pool() *pgxpool.Pool { return s.db }

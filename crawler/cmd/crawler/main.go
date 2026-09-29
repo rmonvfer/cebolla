@@ -21,6 +21,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"onioncrawler/internal/analyze"
 	"onioncrawler/internal/crawl"
 	"onioncrawler/internal/explore"
 	"onioncrawler/internal/fetch"
@@ -69,6 +70,15 @@ func main() {
 		err = seedsync(ctx, log)
 	case "explore":
 		err = runExplore(ctx, log)
+	case "analyze":
+		var st *store.Store
+		if st, err = store.Open(ctx, env("DATABASE_URL", "")); err == nil {
+			var r *analyze.Result
+			if r, err = analyze.New(st.Pool()).Run(ctx); err == nil {
+				log.Info("analysis done", "sites", r.Sites, "edges", r.Edges, "components", r.Components, "operators", r.Operators, "took", r.Took.Round(time.Millisecond))
+			}
+			st.Close()
+		}
 	case "search":
 		err = search(ctx, strings.Join(os.Args[2:], " "))
 	case "migrate":
@@ -78,7 +88,7 @@ func main() {
 			st.Close()
 		}
 	default:
-		err = fmt.Errorf("unknown command %q (run, seedsync, search, explore, migrate)", cmd)
+		err = fmt.Errorf("unknown command %q (run, seedsync, search, explore, analyze, migrate)", cmd)
 	}
 	if err != nil && ctx.Err() == nil {
 		log.Error("fatal", "cmd", cmd, "err", err)
@@ -239,7 +249,7 @@ func serveMetrics(addr string, log *slog.Logger) {
 
 func runExplore(ctx context.Context, log *slog.Logger) error {
 	ix := index.New(env("OPENSEARCH_URL", "https://opensearch:9200"), env("OPENSEARCH_USER", "admin"), os.Getenv("OPENSEARCH_PASSWORD"))
-	srv, err := explore.Open(ctx, env("DATABASE_URL", ""), ix, log)
+	srv, err := explore.Open(ctx, env("DATABASE_URL", ""), env("PROMETHEUS_URL", "http://prometheus:9090"), ix, log)
 	if err != nil {
 		return err
 	}

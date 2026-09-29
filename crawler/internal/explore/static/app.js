@@ -77,8 +77,9 @@ function pager(offset, count, size, base) {
 
 // ---- Router ----------------------------------------------------------------
 
-const routes = { '': overview, search, sites, site, page, graph, entities, entity, clusters };
+const routes = { '': overview, search, sites, site, page, graph, analytics, entities, entity, clusters };
 let cyInstances = [];
+let uplots = [];
 
 async function route() {
   const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
@@ -88,6 +89,9 @@ async function route() {
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === (name || 'overview') || (name === 'site' && a.dataset.r === 'sites') || (name === 'entity' && a.dataset.r === 'entities')));
   cyInstances.forEach((c) => c.destroy());
   cyInstances = [];
+  uplots.forEach((u) => u.destroy());
+  uplots = [];
+  window.__h = h; window.__num = num;
   $app.innerHTML = '<div class="loading">Loading…</div>';
   window.scrollTo(0, 0);
   try {
@@ -169,15 +173,18 @@ async function search(_, p) {
 
 async function sites(_, p) {
   const q = p.get('q') || '', status = p.get('status') || '', sort = p.get('sort') || 'indeg';
+  const comp = p.get('component'), op = p.get('operator');
   const offset = Number(p.get('offset') || 0);
-  const rows = await api(`sites?q=${enc(q)}&status=${enc(status)}&sort=${enc(sort)}&offset=${offset}`);
+  const extra = (comp != null ? `&component=${enc(comp)}` : '') + (op != null ? `&operator=${enc(op)}` : '');
+  const rows = await api(`sites?q=${enc(q)}&status=${enc(status)}&sort=${enc(sort)}&offset=${offset}${extra}`);
+  const banner = comp != null ? `<div class="sub muted">Component #${h(comp)} · <a href="#/analytics">back to analytics</a></div>` : op != null ? `<div class="sub muted">Shared-identifier cluster #${h(op)} — sites sharing payment addresses, keys or emails (may include a common payment processor) · <a href="#/analytics">back to analytics</a></div>` : '';
   const opt = (v, cur, label) => `<option value="${h(v)}"${v === cur ? ' selected' : ''}>${h(label ?? v)}</option>`;
   $app.innerHTML = `
-    <div class="head"><h1>Sites</h1></div>
+    <div class="head"><div><h1>Sites</h1>${banner}</div></div>
     <form id="sf" class="toolbar">
       <input name="q" value="${h(q)}" placeholder="Title or address prefix" style="width:260px">
       <select name="status">${opt('', status, 'any status')}${STATUSES.map((s) => opt(s, status)).join('')}</select>
-      <select name="sort">${opt('indeg', sort, 'most linked-to')}${opt('outdeg', sort, 'most links out')}${opt('pages', sort, 'most pages')}${opt('recent', sort, 'newest')}${opt('seen', sort, 'recently online')}</select>
+      <select name="sort">${opt('rank', sort, 'PageRank')}${opt('indeg', sort, 'most linked-to')}${opt('outdeg', sort, 'most links out')}${opt('pages', sort, 'most pages')}${opt('recent', sort, 'newest')}${opt('seen', sort, 'recently online')}</select>
       <button>Apply</button>
     </form>
     <div class="panel">${table(
@@ -186,17 +193,18 @@ async function sites(_, p) {
         { t: 'Status', f: (r) => badge(r.status) },
         { t: 'Linked from', n: 1, f: (r) => num(r.indeg) },
         { t: 'Links to', n: 1, f: (r) => num(r.outdeg) },
+        { t: 'PageRank', n: 1, f: (r) => (r.pagerank != null ? (r.pagerank * 1e6).toFixed(1) : '—') },
         { t: 'Pages', n: 1, f: (r) => num(r.pages_fetched) },
         { t: 'First seen', f: (r) => day(r.first_seen) },
         { t: 'Last online', f: (r) => ago(r.last_ok) },
       ],
       rows,
       'No sites match.',
-    )}${pager(offset, rows.length, 100, `#/sites?q=${enc(q)}&status=${enc(status)}&sort=${enc(sort)}`)}</div>`;
+    )}${pager(offset, rows.length, 100, `#/sites?q=${enc(q)}&status=${enc(status)}&sort=${enc(sort)}${extra}`)}</div>`;
   document.getElementById('sf').addEventListener('submit', (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    location.hash = `#/sites?q=${enc(f.get('q'))}&status=${enc(f.get('status'))}&sort=${enc(f.get('sort'))}`;
+    location.hash = `#/sites?q=${enc(f.get('q'))}&status=${enc(f.get('status'))}&sort=${enc(f.get('sort'))}${extra}`;
   });
 }
 
@@ -228,12 +236,15 @@ async function site(id) {
       <div>
         <h1>${s.title ? h(s.title) : '<span class="faint">(no title)</span>'}</h1>
         <div class="sub">${onion(s.onion)} ${badge(s.status)}
+          ${s.component != null ? `<a href="#/sites?component=${Number(s.component)}&sort=rank" class="muted">component #${num(s.component)}</a>` : ''}
+          ${s.operator != null ? `<a href="#/sites?operator=${Number(s.operator)}&sort=rank" style="color:var(--accent)">shared-id cluster #${num(s.operator)} →</a>` : ''}
           <a href="#/graph?site=${Number(s.id)}&hops=2">Open in graph →</a></div>
       </div>
     </div>
     <div class="stats">
       ${stat('linked from (sites)', num(s.indeg))}${stat('links to (sites)', num(s.outdeg))}${stat('pages', num(s.pages_fetched))}
       ${stat('first seen', day(s.first_seen))}${stat('last online', ago(s.last_ok))}
+      ${s.pagerank != null ? stat('PageRank ×10⁶', (s.pagerank * 1e6).toFixed(1)) : ''}
     </div>
     <div class="grid g2">
       ${panel('Liveness, last 90 days', `<div class="uptime">${cells}</div>
@@ -505,4 +516,127 @@ async function clusters() {
           ${c.size > c.sites.length ? `<div class="muted">…and ${num(c.size - c.sites.length)} more</div>` : ''}</section>`,
       )
       .join('')}`;
+}
+
+// ---- Analytics -------------------------------------------------------------
+
+async function apiProm(series, hours) {
+  try {
+    const d = await api(`prom?series=${series}&hours=${hours}`);
+    return d.series || [];
+  } catch {
+    return [];
+  }
+}
+
+function mountChart(id, fn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  try {
+    const u = fn(el);
+    if (u) uplots.push(u);
+  } catch (e) {
+    el.innerHTML = `<div class="empty">chart error</div>`;
+  }
+}
+
+const chartBox = (id, title, hint) =>
+  `<div class="chart"><h3>${title}</h3>${hint ? `<div class="hint">${hint}</div>` : ''}<div id="${id}"></div></div>`;
+
+async function analytics(_, p) {
+  const hours = Number(p.get('h') || 24);
+  const ranges = [[1, '1h'], [6, '6h'], [24, '24h'], [72, '3d'], [168, '7d']];
+  const [d, fetchRate, latency, latency95, workers, frontier, pagesRate, linksRate] = await Promise.all([
+    api('analytics'),
+    apiProm('fetch_rate', hours),
+    apiProm('latency', hours),
+    apiProm('latency_p95', hours),
+    apiProm('workers', hours),
+    apiProm('frontier', hours),
+    apiProm('pages_rate', hours),
+    apiProm('links_rate', hours),
+  ]);
+  const g = d.graph || {};
+
+  // Manual index column (table() has no row index), so render top_rank directly.
+  const rankRows = (d.top_rank || [])
+    .map((r, i) => `<tr><td class="n muted">${i + 1}</td><td>${siteCell(r)}</td><td>${badge(r.status)}</td><td class="n">${num(r.indeg)}</td><td class="n">${(r.pagerank * 1e6).toFixed(1)}</td></tr>`)
+    .join('');
+
+  $app.innerHTML = `
+    <div class="head">
+      <div><h1>Analytics</h1><div class="sub muted">Live crawl telemetry (Prometheus) and structural analysis of the link graph.</div></div>
+      <div class="rangesel">${ranges.map(([hh, lbl]) => `<a class="${hh === hours ? 'on' : ''}" href="#/analytics?h=${hh}">${lbl}</a>`).join('')}</div>
+    </div>
+
+    <div class="section-title"><h2>Live</h2><span class="hint">rolling rates over the selected window</span></div>
+    <div class="chartgrid">
+      ${chartBox('c-fetch', 'Fetch rate by outcome', 'requests/sec, stacked')}
+      ${chartBox('c-latency', 'Fetch latency', 'successful fetches')}
+      ${chartBox('c-through', 'Throughput', 'pages stored & links queued /sec')}
+      ${chartBox('c-workers', 'Busy workers')}
+      ${chartBox('c-frontier', 'Frontier size')}
+    </div>
+
+    <div class="section-title"><h2>History</h2><span class="hint">from the crawl database</span></div>
+    <div class="chartgrid">
+      ${chartBox('c-disc', 'Sites discovered', 'cumulative known sites')}
+      ${chartBox('c-pages', 'Pages stored', 'cumulative')}
+      ${chartBox('c-outcomes', 'Fetch outcomes', 'per hour, last 7 days, stacked')}
+      ${chartBox('c-pct', 'Latency percentiles', 'per hour, last 3 days')}
+    </div>
+
+    <div class="section-title"><h2>Distributions</h2></div>
+    <div class="grid g2">
+      ${panel('Sites by status', distBars(d.status, 'status', 'n', { label: (r) => badge(r.status) }))}
+      ${panel('Pages per site', distBars(d.site_sizes, 'bucket', 'sites', { color: () => 'var(--accent-2)' }))}
+      ${panel('Crawl depth of stored pages', distBars(d.depth, 'depth', 'n', { color: () => 'var(--accent)', label: (r) => `depth ${num(r.depth)}` }))}
+      ${panel('Entity kinds <span class="faint">· sites carrying each</span>', distBars(d.entity_kinds, 'kind', 'sites', { color: () => 'var(--up)', mono: true }))}
+    </div>
+
+    <div class="section-title"><h2>Graph analysis</h2>
+      <span class="hint">${g.analysed ? `${num(g.analysed)} sites · ${num(g.components)} components · ${num(g.operators)} shared-id clusters · updated ${ago(g.updated_at)}` : 'not computed yet (runs every 15 min)'}</span></div>
+    <div class="grid g2">
+      ${panel('Most important sites <span class="faint">· PageRank</span>', `<div class="scroll"><table><thead><tr><th class="n">#</th><th>Site</th><th>Status</th><th class="n">Linked from</th><th class="n">PageRank ×10⁶</th></tr></thead><tbody>${rankRows || '<tr><td colspan="5" class="muted">pending…</td></tr>'}</tbody></table></div>`)}
+      ${panel('Largest components <span class="faint">· weakly-connected</span>', `<div class="scroll">${table(
+        [
+          { t: 'Component', f: (r) => `<a href="#/sites?component=${Number(r.component)}&sort=rank">#${num(r.component)}</a>` },
+          { t: 'Top site', cls: 'clip', f: (r) => h(r.top) },
+          { t: 'Sites', n: 1, f: (r) => num(r.sites) },
+        ],
+        d.components,
+        'pending…',
+      )}</div>`)}
+      ${panel('Shared-identifier clusters <span class="faint">· sites sharing payment addresses / keys / emails</span>', `<div class="scroll">${table(
+        [
+          { t: 'Cluster', f: (r) => `<a href="#/sites?operator=${Number(r.operator)}&sort=rank">#${num(r.operator)}</a>` },
+          { t: 'Top site', cls: 'clip', f: (r) => h(r.top) },
+          { t: 'Shared', f: (r) => `<span class="faint mono">${h(r.kinds || '')}</span>` },
+          { t: 'Sites', n: 1, f: (r) => num(r.sites) },
+        ],
+        d.operators,
+        'no clusters found',
+      )}</div>`)}
+    </div>`;
+
+  // Instantiate charts (elements now in the DOM with a width).
+  mountChart('c-fetch', (el) => stackedChart(el, fetchRate, { yfmt: fmtNum }));
+  mountChart('c-latency', (el) => lineChart(el, [
+    ...(latency.map((s) => ({ ...s, name: 'p50' }))),
+    ...(latency95.map((s) => ({ ...s, name: 'p95' }))),
+  ], { yfmt: (v) => v.toFixed(1) + 's' }));
+  mountChart('c-through', (el) => lineChart(el, [
+    ...(pagesRate.map((s) => ({ ...s, name: 'pages' }))),
+    ...(linksRate.map((s) => ({ ...s, name: 'links' }))),
+  ], { fill: true }));
+  mountChart('c-workers', (el) => lineChart(el, workers.map((s) => ({ ...s, name: 'busy' })), { fill: true }));
+  mountChart('c-frontier', (el) => lineChart(el, frontier, { yfmt: fmtNum }));
+
+  mountChart('c-disc', (el) => lineChart(el, fromRows(d.discovery, 'day', [{ key: 'total', label: 'known sites' }]), { fill: true, yfmt: fmtNum }));
+  mountChart('c-pages', (el) => lineChart(el, fromRows(d.pages, 'day', [{ key: 'total', label: 'pages' }]), { fill: true, yfmt: fmtNum }));
+  mountChart('c-outcomes', (el) => stackedChart(el, fromRows(d.outcomes, 't', [
+    { key: 'ok' }, { key: 'http_error' }, { key: 'offline' }, { key: 'timeout' }, { key: 'other' },
+  ]), { yfmt: fmtNum }));
+  mountChart('c-pct', (el) => lineChart(el, fromRows(d.latency, 't', [{ key: 'p50' }, { key: 'p90' }, { key: 'p99' }]), { yfmt: fmtMs }));
+
 }

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>cebolla explorer</title>
+<link rel="stylesheet" href="uplot.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,6 +16,7 @@
     <a href="#/search" data-r="search">Search</a>
     <a href="#/sites" data-r="sites">Sites</a>
     <a href="#/graph" data-r="graph">Graph</a>
+    <a href="#/analytics" data-r="analytics">Analytics</a>
     <a href="#/entities" data-r="entities">Entities</a>
     <a href="#/clusters" data-r="clusters">Clusters</a>
   </nav>
@@ -24,6 +26,8 @@
 </header>
 <main id="app"><div class="loading">Loading…</div></main>
 <div id="toast" class="toast" hidden></div>
+<script src="uplot.min.js"></script>
+<script src="charts.js"></script>
 <script src="cytoscape.min.js"></script>
 <script src="app.js"></script>
 </body>

@@ -130,6 +130,7 @@ services:
       DATABASE_URL: postgres://crawler:${POSTGRES_PASSWORD}@postgres:5432/crawler?sslmode=disable&pool_max_conns=8
       OPENSEARCH_URL: https://opensearch:9200
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+      PROMETHEUS_URL: http://prometheus:9090
     depends_on:
       crawler: { condition: service_started }
     ports: ["127.0.0.1:8088:8088"]
