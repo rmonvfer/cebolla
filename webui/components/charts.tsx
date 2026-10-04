@@ -25,11 +25,14 @@ export function alignProm(series: PromLine[]): { data: Point[]; keys: string[] }
 
 // Rows [{t|day, ...}] -> chart points for the given numeric keys.
 export function fromRows(rows: any[], xField: string, keys: string[]): { data: Point[]; keys: string[] } {
-  const data = (rows ?? []).map((r) => {
-    const p: Point = { t: Math.floor(new Date(r[xField]).getTime() / 1000) };
-    for (const k of keys) p[k] = r[k] == null ? null : Number(r[k]);
-    return p;
-  });
+  const data = (rows ?? [])
+    .map((r) => {
+      const t = Math.floor(new Date(r[xField]).getTime() / 1000);
+      const p: Point = { t };
+      for (const k of keys) p[k] = r[k] == null ? null : Number(r[k]);
+      return p;
+    })
+    .filter((p) => Number.isFinite(p.t as number));
   return { data, keys };
 }
 
@@ -37,10 +40,18 @@ const cfgFor = (keys: string[]): ChartConfig =>
   Object.fromEntries(keys.map((k, i) => [k, { label: k, color: colorFor(k, i) }]));
 
 const timeTick = (t: number) => {
+  if (!Number.isFinite(t)) return '';
   const d = new Date(t * 1000);
   return d.getUTCHours().toString().padStart(2, '0') + ':' + d.getUTCMinutes().toString().padStart(2, '0');
 };
-const dayTick = (t: number) => new Date(t * 1000).toISOString().slice(5, 10);
+const dayTick = (t: number) => {
+  if (!Number.isFinite(t)) return '';
+  return new Date(t * 1000).toISOString().slice(5, 10);
+};
+const labelFmt = (xMode: 'time' | 'day') => (v: unknown) => {
+  const n = Number(v);
+  return xMode === 'day' ? dayTick(n) : timeTick(n);
+};
 
 interface ChartProps {
   data: Point[];
@@ -67,7 +78,7 @@ export function StackedArea({ data, keys, height = 180, yFmt = compact, xMode = 
         <CartesianGrid vertical={false} />
         <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={xMode === 'day' ? dayTick : timeTick} tickLine={false} axisLine={false} minTickGap={40} />
         <YAxis width={40} tickFormatter={yFmt} tickLine={false} axisLine={false} />
-        <ChartTooltip content={<ChartTooltipContent labelFormatter={(v) => (xMode === 'day' ? dayTick(Number(v)) : timeTick(Number(v)))} />} />
+        <ChartTooltip content={<ChartTooltipContent labelFormatter={labelFmt(xMode)} />} />
         {keys.map((k, i) => (
           <Area key={k} dataKey={k} type="monotone" stackId="1" stroke={colorFor(k, i)} strokeWidth={1} fill={`url(#g-${k})`} isAnimationActive={false} />
         ))}
@@ -84,7 +95,7 @@ export function Lines({ data, keys, height = 180, yFmt = compact, xMode = 'time'
         <CartesianGrid vertical={false} />
         <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={xMode === 'day' ? dayTick : timeTick} tickLine={false} axisLine={false} minTickGap={40} />
         <YAxis width={40} tickFormatter={yFmt} tickLine={false} axisLine={false} />
-        <ChartTooltip content={<ChartTooltipContent labelFormatter={(v) => (xMode === 'day' ? dayTick(Number(v)) : timeTick(Number(v)))} />} />
+        <ChartTooltip content={<ChartTooltipContent labelFormatter={labelFmt(xMode)} />} />
         {keys.map((k, i) => (
           <Line key={k} dataKey={k} type="monotone" stroke={colorFor(k, i)} strokeWidth={1.6} dot={false} connectNulls isAnimationActive={false} />
         ))}
